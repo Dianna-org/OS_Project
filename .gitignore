@@ -29,6 +29,7 @@
 *.dylib
 
 # Executables
+treasure_manager
 *.exe
 *.out
 *.app
