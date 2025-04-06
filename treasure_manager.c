@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <ctype.h>
 
 
 #define ID_MAX_LENGTH 16
@@ -50,11 +52,38 @@ typedef struct {
 
 
 //-----------------------
+bool check_if_username_is_correct(const char *user_name) {
+    const char *current_char = user_name;
+    while(*current_char != '\0'){
+        if((isalnum(*current_char) == 0) && *current_char != '_') {
+            return false;
+        }
+
+        current_char++;
+    }
+
+    return true;
+}
+
+
 
 // Validate that the given string has length between 1 and ID_MAX_LENGTH,
 // and contains only letters, digits and/or '_'
 int validate_id(const char *id) {
-    //TODO 
+    const char *current_char = id;
+    while(*current_char != '\0') {
+        if(isdigit(*current_char) == 0) {
+            return ERR_INVALID_CHARACTER;
+        }
+
+        current_char++;
+    }
+
+    int length = strlen(id);
+    if((length < 1 || length > ID_MAX_LENGTH)) {
+        return ERR_INVALID_CHARACTER;
+    }
+
     return OK_RESPONSE;
 }
 
@@ -63,8 +92,15 @@ int validate_id(const char *id) {
 // and contains only letters, digits and/or '_'
 int validate_user_name(const char *user_name) {
     //TODO
+    int length = strlen(user_name);
+    bool check_username = check_if_username_is_correct(user_name);
+    if((check_username == false) || (length < 1 || length > USER_NAME_MAX_LENGTH)) {
+        return ERR_INVALID_CHARACTER;
+    }
+
     return OK_RESPONSE;
 }
+
 
 
 // Allocate a treasure, using malloc(), and return it
