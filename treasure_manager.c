@@ -106,10 +106,21 @@ int validate_user_name(const char *user_name) {
 // Allocate a treasure, using malloc(), and return it
 // NICE TO HAVE: fill in pointers for treasure ID, user name and clue text
 treasure_data *alloc_treasure(const char *hunt_id) {
-    //TODO
-    return OK_RESPONSE;
-}
 
+    treasure_data *treasure = (treasure_data *)malloc(sizeof(treasure_data));
+    if (treasure == NULL) {
+        return NULL;
+    }
+
+    treasure->treasure_id = strdup(hunt_id);
+    treasure->user_name = strdup("UnknownUser");
+    treasure->clue_text = strdup("No clue available.");
+    treasure->latitude = 0.0;
+    treasure->longitude = 0.0;
+    treasure->value = 0;
+
+    return treasure;
+}
 
 // De-allocate treasure, if NOT already deallocated.
 void free_treasure(treasure_data **treasure) {
@@ -123,18 +134,53 @@ void free_treasure(treasure_data **treasure) {
 // Read the next treasure block, parse it and put it into the given structure.
 // NOTE: read the block, then extract the numeric values from the data block
 int read_treasure(FILE *input_file, treasure_data *treasure) {
-    //TODO
-    return OK_RESPONSE;
+    if (input_file == NULL || treasure == NULL) {
+        return ERR_READ_FILE;
+    }
 
+    if (fread(treasure->data_block, TREASURE_BLOCK_LENGTH, 1, input_file) != 1) {
+        return ERR_EOF;
+    }
+
+    // Parse the block into the treasure_data structure
+    treasure->treasure_id = strndup(treasure->data_block, ID_MAX_LENGTH);
+    treasure->user_name = strndup(treasure->data_block + ID_MAX_LENGTH, USER_NAME_MAX_LENGTH);
+    treasure->clue_text = strndup(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH, CLUE_TEXT_MAX_LENGTH);
+
+    // Use pointer arithmetic and type casting to extract numeric values
+    treasure->latitude = *(float *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH);
+    treasure->longitude = *(float *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH + sizeof(float));
+    treasure->value = *(int *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH + 2 * sizeof(float));
+
+    return OK_RESPONSE;
 }
+
 
 
 // Write a treasure block into a file.
 // NOTE: put the numeric values into the data block, then write the block to file
 int write_treasure(FILE *output_file, const treasure_data *treasure) {
-    //TODO
-    return OK_RESPONSE;
+    if (output_file == NULL || treasure == NULL) {
+        return ERR_WRITE_FILE;
+    }
 
+    // Prepare the data block for writing
+    treasure_data *treasure = (treasure_data *)calloc(1, sizeof(treasure_data));
+    strncpy(treasure->data_block, treasure->treasure_id, ID_MAX_LENGTH);
+    strncpy(treasure->data_block + ID_MAX_LENGTH, treasure->user_name, USER_NAME_MAX_LENGTH);
+    strncpy(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH, treasure->clue_text, CLUE_TEXT_MAX_LENGTH);
+
+    // Use pointer arithmetic to write numeric values directly
+    *(float *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH) = treasure->latitude;
+    *(float *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH + sizeof(float)) = treasure->longitude;
+    *(int *)(treasure->data_block + ID_MAX_LENGTH + USER_NAME_MAX_LENGTH + CLUE_TEXT_MAX_LENGTH + 2 * sizeof(float)) = treasure->value;
+
+    // Write the block to the file
+    if (fwrite(treasure->data_block, TREASURE_BLOCK_LENGTH, 1, output_file) != 1) {
+        return ERR_WRITE_FILE; // Write error
+    }
+
+    return OK_RESPONSE;
 }
 
 //-----------------------
@@ -153,15 +199,48 @@ int list_hunt_treasures(const char *hunt_id) {
 
 
 int remove_hunt(const char *hunt_id) {
-    //TODO
+    char directory_path[256];
+    snprintf(directory_path, sizeof(directory_path), "./%s", hunt_id);
+
+    // Remove directory and files (use system calls like `unlink` and `rmdir`)
+    // TODO: Traverse and delete files if necessary
+    if (rmdir(directory_path) != 0) {
+        return ERR_HUNT_NOT_FOUND; // Error removing directory
+    }
+
     return OK_RESPONSE;
 }
 
 
-int add_treasure(const char *hunt_id, const char *treasure_id) {
-    //TODO
+
+int add_hunt(const char *hunt_id) {
+    /*char directory_path[256];
+    snprintf(directory_path, sizeof(directory_path), "./%s", hunt_id);
+
+    // Create hunt directory
+    if (mkdir(directory_path, 0755) != 0) {
+        return ERR_HUNT_NOT_FOUND; // Error creating directory
+    }
+
+    // Create log file
+    char log_file_path[256];
+    snprintf(log_file_path, sizeof(log_file_path), "%s/logged_hunt", directory_path);
+    FILE *log_file = fopen(log_file_path, "w");
+    if (log_file == NULL) {
+        return ERR_WRITE_FILE; // Error creating log file
+    }
+    fclose(log_file);
+
+    // Create symbolic link
+    char symlink_name[256];
+    snprintf(symlink_name, sizeof(symlink_name), "logged_hunt-%s", hunt_id);
+    if (symlink(log_file_path, symlink_name) != 0) {
+        return ERR_WRITE_FILE; // Error creating symbolic link
+    }*/
+
     return OK_RESPONSE;
 }
+
 
 
 int view_treasure(const char *hunt_id, const char *treasure_id) {
