@@ -49,21 +49,72 @@ int stop_monitor_was_sent = 0;
 const char* communication_file = "hub_communication.tmp";
 
 
+// 
+
+
 //---------------------------------
 // Treasure functionalities
+
+// Make list_hunts, list_treasures and view_treasure to work
+
+void list_hunts()
+{
+    // TODO implement this
+}
+
+void list_treasures(const char* hunt_id)
+{
+    // TODO implement this
+}
+
+void view_treasure(const char* hunt_id, const char* treasure_id)
+{
+    // TODO implement this
+}
 
 
 //---------------------------------
 // Monitor (child) code
 
+void perform_operation()
+{
+    char buff[256];
+    char arg1[128];
+    char arg2[128];
+    // step 1 - read data from file: operation + arguments => into buff, using open, read, close
+    // step 2 - get the 1st character from buff => operation discriminant
+
+    // step 3 - perform the necessary operation, using a switch
+    switch (buff[0])
+    {
+        case 'H':
+            // list hunts
+            list_hunts();
+            break;
+
+        case 'T':
+            // list treasures
+            sscanf(buff + 1, "%s", arg1);
+            list_treasures(arg1);
+            break;
+
+        case 'V':
+            // view specific treasure
+            sscanf(buff + 1, "%s %s", arg1, arg2);
+            view_treasure(arg1, arg2);
+            break;
+    }
+}
+
 void monitor_signal_handler(int signal)
 {
     if (signal == SIGUSR1) {
-        printf("[MONITOR] Got message from HUB :)\n");
+        perform_operation();
         // send signal to HUB, that the monitor has finished its command
         kill(hub_pid, SIGUSR1);
     }
     else if (signal == SIGUSR2) {
+        // On SIGUSR2 do a delay and then exit
         usleep(10123123);
         exit(0);
     }
@@ -103,41 +154,6 @@ void start_monitor() {
     }
 }
 
-// Function to list hunts
-void list_hunts() {
-    if (monitor_pid != -1) {
-        kill(monitor_pid, SIGUSR1); // Send signal to monitor
-    } else {
-        printf("Monitor is not running.\n");
-    }
-}
-
-// Function to list treasures by sending SIGUSR2 to the monitor
-void list_treasures() {
-    if (monitor_pid != -1) {
-        kill(monitor_pid, SIGUSR2); // Send signal to monitor
-    } else {
-        printf("ERROR: Monitor is not running.\n");
-    }
-}
-
-// Function to view a specific treasure
-void view_treasure() {
-    if (monitor_pid != -1) {
-        kill(monitor_pid, SIGUSR1); // Send signal to monitor
-    } else {
-        printf("Monitor is not running.\n");
-    }
-}
-
-// Function to view a specific treasure by sending SIGUSR2 to the monitor
-void view_specific_treasure() {
-    if (monitor_pid != -1) {
-        kill(monitor_pid, SIGUSR2);
-    } else {
-        printf("ERROR: Monitor is not running.\n");
-    }
-}
 
 // Function to stop the monitor process
 void stop_monitor() {
@@ -173,13 +189,20 @@ void handle_signal(int sig) {
     }
 }
 
-void send_command_to_monitor(const char* command)
+void send_command_to_monitor(const char* command, char cmd_code, const char* arg1, const char* arg2)
 {
     if (monitor_pid == -1) {
         printf("ERROR: Monitor is not running.\n");
     } else if (stop_monitor_was_sent) {
         printf("ERROR: Stop signal was sent to monitor.\n");
     } else {
+        // TODO write file contents:
+        // step1: put values into a buffer
+        char buff[256];
+        sprintf(buff, "%c%s %s", cmd_code, arg1, arg2);
+        // step2: write buffer to file - using open(), write(), close()
+
+        // signal to monitor that it should run the operation
         monitor_is_busy = 1; // true
         kill(monitor_pid, SIGUSR1);
         while (monitor_is_busy) {
@@ -204,6 +227,8 @@ int can_exit_hub() {
 
 int main() {
     char command[50];
+    char arg1[128];
+    char arg2[128];
 
     // get hub (parent) PID
     hub_pid = getpid();
@@ -225,17 +250,21 @@ int main() {
             printf("Monitor is running, PID=%d\n", monitor_pid);
         }
 
+        arg1[0] = 0;
+        arg2[0] = 0;
         printf("Enter command: ");
         scanf("%s", command);
 
         if (strcmp(command, "start_monitor") == 0) {
             start_monitor();
         } else if (strcmp(command, "list_hunts") == 0) {
-            send_command_to_monitor(command); // list_hunts();
+            send_command_to_monitor(command, 'H', arg1, arg2); // list_hunts();
         } else if (strcmp(command, "list_treasures") == 0) {
-            send_command_to_monitor(command); // list_treasures();
+            scanf("%s", arg1);
+            send_command_to_monitor(command, 'T', arg1, arg2); // list_treasures();
         } else if (strcmp(command, "view_treasure") == 0) {
-            send_command_to_monitor(command); // view_treasure();
+            scanf("%s %s", arg1, arg2);
+            send_command_to_monitor(command, 'V', arg1, arg2); // view_treasure();
         } else if (strcmp(command, "stop_monitor") == 0) {
             stop_monitor();
         } else if (strcmp(command, "exit") == 0) {
