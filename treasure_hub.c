@@ -3,13 +3,20 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <signal.h>
-#include <string.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <stdbool.h>
+#include <dirent.h>
 
-/*// Define maximum number of hunts and treasures
+
+ // Define maximum number of hunts and treasures
 #define MAX_HUNTS 10
 #define MAX_TREASURES 100
 #define ID_MAX_LENGTH 16
@@ -17,14 +24,6 @@
 #define CLUE_TEXT_MAX_LENGTH 800
 #define TREASURE_BLOCK_LENGTH (sizeof(treasure_data))
 
-// Structure to store information about hunts
-typedef struct {
-    int id;
-    char name[50];
-    int treasures;
-} Hunt;
-
-// Structure to store information about treasures
 typedef struct {
     char treasure_id[ID_MAX_LENGTH];
     char user_name[USER_NAME_MAX_LENGTH];
@@ -32,14 +31,8 @@ typedef struct {
     float latitude;
     float longitude;
     int value;
-} Treasure;
+} treasure_data;
 
-// Global variables to store hunts, treasures, and their counts
-Hunt hunts[MAX_HUNTS];
-Treasure treasures[MAX_TREASURES];
-int hunt_count = 0;
-int treasure_count = 0;
-*/
 
 // Global variables
 pid_t hub_pid = -1;
@@ -57,19 +50,127 @@ const char* communication_file = "hub_communication.tmp";
 
 // Make list_hunts, list_treasures and view_treasure to work
 
+bool check_if_hunt_exists(const char *hunt_id) {
+    struct stat hunt_stat;
+
+    // Check if given hunt exists
+    if((stat(hunt_id, &hunt_stat) == 0) && S_ISDIR(hunt_stat.st_mode)) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
+bool find_treasure_in_hunt(const char *hunt_id, const char *treasure_id, treasure_data *treasure) {
+    int no_of_treasures = -1;
+    char buff[128];
+    sprintf(buff, "%s/treasures", hunt_id);
+    struct stat file_stat;
+    int rc = stat(buff, &file_stat);
+
+    if(rc < 0) {
+        // no treasures file => the treasure does not exist
+        return false;
+    }
+
+    no_of_treasures = file_stat.st_size / TREASURE_BLOCK_LENGTH;
+    int file_desc = open(buff, O_RDONLY);
+    if(file_desc < 0) {
+        printf("ERROR: Cannot open treasure file for: %s\n", hunt_id);
+        return false;
+    }
+
+    for(int i = 0; i < no_of_treasures; i++) {
+        ssize_t bytes_read = read(file_desc, treasure, TREASURE_BLOCK_LENGTH);
+
+        if(bytes_read != TREASURE_BLOCK_LENGTH) {
+            close(file_desc);
+            printf("ERROR: Read %ld out of %ld bytes!\n", bytes_read, TREASURE_BLOCK_LENGTH);
+            return false;
+        }
+        if(strcmp(treasure_id, treasure->treasure_id) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void list_hunts()
 {
-    // TODO implement this
+    DIR *dir;
+    struct dirent *read_from_dir;
+    const char *hunt_entry_name= "logged_hunt-";
+    int length_entry_name = strlen(hunt_entry_name);
+
+    // Open the directory
+    dir = opendir(".");
+
+    if(dir) {
+        // Read from directory
+        while((read_from_dir = readdir(dir)) != NULL) {
+            if(strncmp(hunt_entry_name, read_from_dir->d_name, length_entry_name) == 0) {
+                printf("Hunt ID: %s\n", read_from_dir->d_name + length_entry_name);
+            }
+        }
+
+        // Close the directory
+        closedir(dir);
+    }
 }
 
 void list_treasures(const char* hunt_id)
 {
-    // TODO implement this
+    if(!check_if_hunt_exists(hunt_id)) {
+        printf("ERROR: Hunt does NOT exist: %s\n", hunt_id);
+        return;
+    }
+
+    printf("Hunt name: %s\n", hunt_id);
+
+    struct stat stat_buff;
+    char buff[128];
+    sprintf(buff, "%s/treasures", hunt_id);
+    int rc = stat(buff, &stat_buff);
+
+    if(rc != 0) {
+        printf("No treasures for this hunt.\n");
+        return;
+    }
+
+    int no_of_treasures = stat_buff.st_size / TREASURE_BLOCK_LENGTH;
+    printf("Number of treasures: %d\n", no_of_treasures);
+
+    treasure_data treasure;
+    int file_desc = open(buff, O_RDONLY);
+    for(int i = 0; i < no_of_treasures; i++) {
+        read(file_desc, &treasure, TREASURE_BLOCK_LENGTH);
+        printf("Treasure ID: %s\n", treasure.treasure_id);
+    }
 }
 
 void view_treasure(const char* hunt_id, const char* treasure_id)
 {
-    // TODO implement this
+    if(!check_if_hunt_exists(hunt_id)) {
+        printf("ERROR: Hunt does NOT exist: %s\n", hunt_id);
+        return;
+    }
+
+    treasure_data treasure;
+    bool rc = find_treasure_in_hunt(hunt_id, treasure_id, &treasure);
+    if (!rc) {
+        printf("ERROR: Treasure %s does not exist in hunt %s\n", treasure_id, hunt_id);
+        return;
+    }
+
+    printf("Hunt %s, treasure %s:\n", hunt_id, treasure.treasure_id);
+    printf("       User: %s\n", treasure.user_name);
+    printf("      Value: %d\n", treasure.value);
+    printf("   Latitude: %f\n", treasure.latitude);
+    printf("  Longitude: %f\n", treasure.longitude);
+    printf("  Clue text: %s\n", treasure.clue_text);
+
 }
 
 
@@ -82,10 +183,29 @@ void perform_operation()
     char arg1[128];
     char arg2[128];
     // step 1 - read data from file: operation + arguments => into buff, using open, read, close
+    int file_desc = open(communication_file, O_RDONLY);
+    if(file_desc < 0) {
+        printf("ERROR: Cannot open file %s!\n", communication_file);
+        return;
+    }
+
+    ssize_t bytes_read = read(file_desc, buff, (sizeof(buff)-1)); // space for null terminator
+    // Close file
+    close(file_desc);
+
+    if(bytes_read <= 0) {
+        printf("ERROR: Failed to read from file %s!\n", communication_file);
+        return;
+    }
+
+    // Add the null terminator
+    buff[bytes_read] = '\0';
+
     // step 2 - get the 1st character from buff => operation discriminant
+    char command = buff[0];
 
     // step 3 - perform the necessary operation, using a switch
-    switch (buff[0])
+    switch (command)
     {
         case 'H':
             // list hunts
@@ -196,11 +316,30 @@ void send_command_to_monitor(const char* command, char cmd_code, const char* arg
     } else if (stop_monitor_was_sent) {
         printf("ERROR: Stop signal was sent to monitor.\n");
     } else {
-        // TODO write file contents:
         // step1: put values into a buffer
         char buff[256];
-        sprintf(buff, "%c%s %s", cmd_code, arg1, arg2);
+        if((strlen(arg1) == 0) && strlen(arg2) == 0) {
+            sprintf(buff, "%c", cmd_code);
+        }
+        else if(strlen(arg2) == 0) {
+            sprintf(buff, "%c%s\n", cmd_code, arg1);
+        }
+        else {
+            sprintf(buff, "%c%s %s\n", cmd_code, arg1, arg2);
+        }
+
         // step2: write buffer to file - using open(), write(), close()
+        int file_desc = open(communication_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP);
+        if(file_desc < 0) {
+            printf("ERROR: Cannot open file %s!\n", communication_file);
+            return;
+        }
+
+        ssize_t bytes_written = write(file_desc, buff, strlen(buff));
+        if(bytes_written <= 0) {
+            printf("ERROR: Failed to write into file %s!\n", communication_file);
+            return;
+        }
 
         // signal to monitor that it should run the operation
         monitor_is_busy = 1; // true
