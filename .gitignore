@@ -1,5 +1,8 @@
 **/logged_hunt*
 **/treasures
+mgr
+hub
+*.tmp
 
 # Prerequisites
 *.d
