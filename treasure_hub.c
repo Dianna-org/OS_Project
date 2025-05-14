@@ -34,16 +34,25 @@ typedef struct {
 } treasure_data;
 
 
+typedef struct {
+    char operation;
+    char hunt_id[ID_MAX_LENGTH];
+    char treasure_id[ID_MAX_LENGTH];
+} monitor_request;
+
+
 // Global variables
 pid_t hub_pid = -1;
 pid_t monitor_pid = -1;
-int monitor_is_busy = 0;
 int stop_monitor_was_sent = 0;
-const char* communication_file = "hub_communication.tmp";
 
+// Pipe descriptors
+int pipe_monitor_to_hub[2];
+int pipe_hub_to_monitor[2];
+FILE *monitor_to_hub;
 
-// 
-
+// Marker for the end of a command output from the monitor
+const char* finished_monitor_output = "finished_monitor_output\n";
 
 //---------------------------------
 // Treasure functionalities
@@ -179,33 +188,17 @@ void view_treasure(const char* hunt_id, const char* treasure_id)
 
 void perform_operation()
 {
-    char buff[256];
-    char arg1[128];
-    char arg2[128];
-    // step 1 - read data from file: operation + arguments => into buff, using open, read, close
-    int file_desc = open(communication_file, O_RDONLY);
-    if(file_desc < 0) {
-        printf("ERROR: Cannot open file %s!\n", communication_file);
+    monitor_request request;
+
+    // step 1 - read data from pipe
+    int expected_size = sizeof(monitor_request);
+    if (read(pipe_hub_to_monitor[0], &request, expected_size) != expected_size) {
+        printf("ERROR: Failed to read from pipe!\n");
         return;
     }
 
-    ssize_t bytes_read = read(file_desc, buff, (sizeof(buff)-1)); // space for null terminator
-    // Close file
-    close(file_desc);
-
-    if(bytes_read <= 0) {
-        printf("ERROR: Failed to read from file %s!\n", communication_file);
-        return;
-    }
-
-    // Add the null terminator
-    buff[bytes_read] = '\0';
-
-    // step 2 - get the 1st character from buff => operation discriminant
-    char command = buff[0];
-
-    // step 3 - perform the necessary operation, using a switch
-    switch (command)
+    // step 2 - perform the necessary operation, using a switch
+    switch (request.operation)
     {
         case 'H':
             // list hunts
@@ -214,14 +207,12 @@ void perform_operation()
 
         case 'T':
             // list treasures
-            sscanf(buff + 1, "%s", arg1);
-            list_treasures(arg1);
+            list_treasures(request.hunt_id);
             break;
 
         case 'V':
             // view specific treasure
-            sscanf(buff + 1, "%s %s", arg1, arg2);
-            view_treasure(arg1, arg2);
+            view_treasure(request.hunt_id, request.treasure_id);
             break;
     }
 }
@@ -230,18 +221,28 @@ void monitor_signal_handler(int signal)
 {
     if (signal == SIGUSR1) {
         perform_operation();
-        // send signal to HUB, that the monitor has finished its command
-        kill(hub_pid, SIGUSR1);
+        // send end of response message
+        printf("%s", finished_monitor_output);
     }
     else if (signal == SIGUSR2) {
         // On SIGUSR2 do a delay and then exit
         usleep(10123123);
+        // Close the pipes
+        close(pipe_hub_to_monitor[0]);
+        close(pipe_monitor_to_hub[1]);
         exit(0);
     }
 }
 
 void run_monitor()
 {
+    // We're in the hub => close the pipe ends which we do not use
+    close(pipe_hub_to_monitor[1]);
+    close(pipe_monitor_to_hub[0]);
+
+    // Redirect standard output to the pipe
+    dup2(pipe_monitor_to_hub[1], 1);
+
     // set up signal handler
     struct sigaction monitor_action;
     monitor_action.sa_handler = monitor_signal_handler;
@@ -260,13 +261,25 @@ void run_monitor()
 // Function to start the monitor process
 void start_monitor() {
     if (monitor_pid == -1) {
-        monitor_pid = fork(); // Create a new process
+        // Create the pipes
+        if (pipe(pipe_hub_to_monitor) < 0 || pipe(pipe_monitor_to_hub) < 0) {
+            perror("Pipe creation failed");
+            return;
+        }
+
+        // Create a new process
+        monitor_pid = fork(); 
         if (monitor_pid == 0) {
             // Child process: Monitor
             run_monitor();
         } else if (monitor_pid == -1) {
             printf("ERROR: Monitor failed to start\n");
         } else {
+            // We're in the hub => close the pipe ends which we do not use
+            close(pipe_hub_to_monitor[0]);
+            close(pipe_monitor_to_hub[1]);
+            // Wrap the monitor-to-hub read descriptor into a FILE
+            monitor_to_hub = fdopen(pipe_monitor_to_hub[0], "rt");
             printf("Monitor started with PID %d\n", monitor_pid);
         }
     } else {
@@ -285,17 +298,10 @@ void stop_monitor() {
         stop_monitor_was_sent = 1;
         kill(monitor_pid, SIGUSR2);
         printf("Sent stop signal to monitor\n");
+        // Close the pipes
+        close(pipe_hub_to_monitor[1]);
+        fclose(monitor_to_hub);
     }
-
-    // if (monitor_pid != -1) {
-    //     kill(monitor_pid, SIGTERM); // Send signal to terminate monitor
-    //     // usleep(100000); // Delay to simulate monitor's exit delay
-    //     waitpid(monitor_pid, NULL, 0); // Wait for the monitor to terminate
-    //     monitor_pid = -1;
-    //     printf("Monitor stopped.\n");
-    // } else {
-    //     printf("ERROR: Monitor is not running.\n");
-    // }
 }
 
 // Signal handler function
@@ -304,50 +310,34 @@ void handle_signal(int sig) {
         wait(NULL); // Clean up child process
         stop_monitor_was_sent = 0;
         monitor_pid = -1;
-    } else if (sig == SIGUSR1) {
-        monitor_is_busy = 0; // false
     }
 }
 
-void send_command_to_monitor(const char* command, char cmd_code, const char* arg1, const char* arg2)
+void send_command_to_monitor(monitor_request *request)
 {
     if (monitor_pid == -1) {
         printf("ERROR: Monitor is not running.\n");
     } else if (stop_monitor_was_sent) {
         printf("ERROR: Stop signal was sent to monitor.\n");
     } else {
-        // step1: put values into a buffer
-        char buff[256];
-        if((strlen(arg1) == 0) && strlen(arg2) == 0) {
-            sprintf(buff, "%c", cmd_code);
-        }
-        else if(strlen(arg2) == 0) {
-            sprintf(buff, "%c%s\n", cmd_code, arg1);
-        }
-        else {
-            sprintf(buff, "%c%s %s\n", cmd_code, arg1, arg2);
-        }
-
-        // step2: write buffer to file - using open(), write(), close()
-        int file_desc = open(communication_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP);
-        if(file_desc < 0) {
-            printf("ERROR: Cannot open file %s!\n", communication_file);
+        // step 1 - write request data to pipe
+        int expected_size = sizeof(monitor_request);
+        if (write(pipe_hub_to_monitor[1], request, expected_size) != expected_size) {
+            printf("ERROR: Failed to write to pipe!\n");
             return;
         }
 
-        ssize_t bytes_written = write(file_desc, buff, strlen(buff));
-        if(bytes_written <= 0) {
-            printf("ERROR: Failed to write into file %s!\n", communication_file);
-            return;
-        }
-
-        // signal to monitor that it should run the operation
-        monitor_is_busy = 1; // true
+        // step 2 - signal to monitor that it should run the operation
         kill(monitor_pid, SIGUSR1);
-        while (monitor_is_busy) {
-            pause();
+
+        // step 3 - read output from monitor, until we get the end messsage
+        char buff[256];
+        while (fscanf(monitor_to_hub, "%255[^\n]\n", buff) != EOF) {
+            if (strcmp(buff, finished_monitor_output) == 0) {
+                break;
+            }
+            printf("%s", buff);
         }
-        printf("Monitor has finished executing command: %s\n", command);
     }
 }
 
@@ -366,8 +356,7 @@ int can_exit_hub() {
 
 int main() {
     char command[50];
-    char arg1[128];
-    char arg2[128];
+    monitor_request request;
 
     // get hub (parent) PID
     hub_pid = getpid();
@@ -389,21 +378,24 @@ int main() {
             printf("Monitor is running, PID=%d\n", monitor_pid);
         }
 
-        arg1[0] = 0;
-        arg2[0] = 0;
+        request.hunt_id[0] = 0;
+        request.treasure_id[0] = 0;
         printf("Enter command: ");
         scanf("%s", command);
 
         if (strcmp(command, "start_monitor") == 0) {
             start_monitor();
         } else if (strcmp(command, "list_hunts") == 0) {
-            send_command_to_monitor(command, 'H', arg1, arg2); // list_hunts();
+            request.operation = 'H';
+            send_command_to_monitor(&request); // list_hunts();
         } else if (strcmp(command, "list_treasures") == 0) {
-            scanf("%s", arg1);
-            send_command_to_monitor(command, 'T', arg1, arg2); // list_treasures();
+            request.operation = 'T';
+            scanf("%s", request.hunt_id);
+            send_command_to_monitor(&request); // list_treasures();
         } else if (strcmp(command, "view_treasure") == 0) {
-            scanf("%s %s", arg1, arg2);
-            send_command_to_monitor(command, 'V', arg1, arg2); // view_treasure();
+            request.operation = 'V';
+            scanf("%s %s", request.hunt_id, request.treasure_id);
+            send_command_to_monitor(&request); // view_treasure();
         } else if (strcmp(command, "stop_monitor") == 0) {
             stop_monitor();
         } else if (strcmp(command, "exit") == 0) {
