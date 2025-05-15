@@ -106,8 +106,7 @@ bool find_treasure_in_hunt(const char *hunt_id, const char *treasure_id, treasur
     return false;
 }
 
-void list_hunts()
-{
+void list_hunts() {
     DIR *dir;
     struct dirent *read_from_dir;
     const char *hunt_entry_name= "logged_hunt-";
@@ -129,8 +128,7 @@ void list_hunts()
     }
 }
 
-void list_treasures(const char* hunt_id)
-{
+void list_treasures(const char* hunt_id) {
     if(!check_if_hunt_exists(hunt_id)) {
         printf("ERROR: Hunt does NOT exist: %s\n", hunt_id);
         return;
@@ -332,7 +330,7 @@ void send_command_to_monitor(monitor_request *request)
 
         // step 3 - read output from monitor, until we get the end messsage
         char buff[256];
-        while (fscanf(monitor_to_hub, "%255[^\n]\n", buff) != EOF) {
+        while (fgets(buff, 255, monitor_to_hub)) {
             if (strcmp(buff, finished_monitor_output) == 0) {
                 break;
             }
@@ -354,6 +352,95 @@ int can_exit_hub() {
     }
 }
 
+//-----------
+
+typedef struct {
+    pid_t pid;
+    int pipe[2];
+    FILE *piperead;
+} calc_score_proc_info;
+
+
+void start_calc_scor_process(const char* hunt_id, calc_score_proc_info *procinfo) {
+    procinfo->pid = 0;
+    procinfo->piperead = NULL;
+
+    // create pipe to communicate with the calcscor process
+    if (pipe(procinfo->pipe) < 0) {
+        perror("Pipe creation failed for calculate score!");
+        return;
+    }
+
+    procinfo->pid = fork();
+    if (procinfo->pid < 0) {
+        perror("Fork failed");
+    } else if (procinfo->pid == 0) {
+        // Child process - starts the calcscor command
+        close(procinfo->pipe[0]); // close the pipe end for reading
+        // Redirect standard output to the pipe
+        dup2(procinfo->pipe[1], 1);
+        // execute the calcscor command
+        execlp("./calcscor", "calcscor", hunt_id, NULL);
+        // if we got here, exec failed
+        printf("ERROR: Failed to execute calcscor for hunt: %s\n", hunt_id);
+        exit(1);
+    } else {
+        // Parent process
+        close(procinfo->pipe[1]); // close the pipe end for writing
+        procinfo->piperead = fdopen(procinfo->pipe[0], "rt");
+    }
+}
+
+void print_calc_scor_output(calc_score_proc_info *procinfo) {
+    if (procinfo->pid > 0) {
+        // read from the pipe until we reach EOF
+        char buff[256];
+        while (fgets(buff, 255, procinfo->piperead)) {
+            printf("%s", buff);
+        }
+        // close the pipe
+        fclose(procinfo->piperead);
+    }
+}
+
+void calculate_score() {
+    printf("Calculating scores...\n");
+
+    DIR *dir;
+    struct dirent *read_from_dir;
+    const char *hunt_entry_name= "logged_hunt-";
+    int length_entry_name = strlen(hunt_entry_name);
+
+    calc_score_proc_info proc_array[256];
+    int cnt_hunts = 0;
+
+    // Open the directory
+    dir = opendir(".");
+    if (!dir) {
+        printf("ERROR: could not open directory to scan for hunts!\n");
+        return;
+    }
+
+    // Read from directory and scan for hunts
+    while((read_from_dir = readdir(dir)) != NULL) {
+        if(strncmp(hunt_entry_name, read_from_dir->d_name, length_entry_name) == 0) {
+            // start a separate process to calculate scores for this hunt
+            const char* hunt_id = read_from_dir->d_name + length_entry_name;
+            start_calc_scor_process(hunt_id, proc_array + cnt_hunts);
+            cnt_hunts++;
+        }
+    }
+
+    // Close the directory
+    closedir(dir);
+
+    // Print the output for each score calculation process
+    for (int i = 0; i < cnt_hunts; i++) {
+        print_calc_scor_output(proc_array + i);
+    }
+}
+
+
 int main() {
     char command[50];
     monitor_request request;
@@ -371,7 +458,7 @@ int main() {
     while (!can_exit) {
         // print monitor status before each command
         if (monitor_pid == -1) {
-            printf("Monitor is not running.\n");
+            printf("Monitor process has finished.\n");
         } else if (stop_monitor_was_sent) {
             printf("Stop signal was sent to monitor.\n");
         } else {
@@ -396,6 +483,8 @@ int main() {
             request.operation = 'V';
             scanf("%s %s", request.hunt_id, request.treasure_id);
             send_command_to_monitor(&request); // view_treasure();
+        } else if (strcmp(command, "calculate_score") == 0) {
+            calculate_score();
         } else if (strcmp(command, "stop_monitor") == 0) {
             stop_monitor();
         } else if (strcmp(command, "exit") == 0) {

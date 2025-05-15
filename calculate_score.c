@@ -32,7 +32,7 @@ typedef struct {
 int main(int argc, char **argv) {
     // Check if only one argument(hunt_id) was provided
     if(argc < 2) {
-        fprintf(stderr, "ERROR: Wrong number of arguments. Usage : %s <hunt_id>\n", argv[0]);
+        printf("ERROR: Wrong number of arguments. Usage : %s <hunt_id>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -46,15 +46,15 @@ int main(int argc, char **argv) {
     // Open the treasure file for reading
     int file_desc = open(file_path, O_RDONLY);
     if(file_desc < 0) {
-        printf("ERROR: Cannot open treasure file!");
+        printf("ERROR: Cannot find hunt: %s\n", hunt_id);
         exit(EXIT_FAILURE);
     }
 
     // Obtain file status information
     struct stat stat_buff;
     if(stat(file_path, &stat_buff) < 0) {
-        printf("ERROR: Cannot obtain informations about treasure file");
-        clode(file_desc);
+        printf("ERROR: Cannot obtain information about hunt: %s\n", hunt_id);
+        close(file_desc);
         exit(EXIT_FAILURE);
     }
 

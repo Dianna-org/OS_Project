@@ -2,6 +2,7 @@
 **/treasures
 mgr
 hub
+calcscor
 *.tmp
 
 # Prerequisites
