@@ -95,7 +95,6 @@ int validate_id(const char *id) {
 // Validate that the given string has length between 1 and USER_NAME_MAX_LENGTH,
 // and contains only letters, digits and/or '_'
 int validate_user_name(const char *user_name) {
-    //TODO
     int length = strlen(user_name);
     bool check_username = check_if_username_is_correct(user_name);
     if((check_username == false) || (length < 1 || length > USER_NAME_MAX_LENGTH)) {
@@ -319,7 +318,6 @@ int remove_hunt(const char *hunt_id) {
     unlink(buff);
 
     // Remove directory and files (use system calls like `unlink` and `rmdir`)
-    // TODO: Traverse and delete files if necessary
     if (rmdir(hunt_id) != 0) {
         printf("ERROR: Failed to remove hunt folder!\n");
         return ERR_HUNT_NOT_FOUND; // Error removing directory
