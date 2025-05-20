@@ -456,6 +456,7 @@ int view_treasure(const char *hunt_id, const char *treasure_id) {
     }
 
     char buff[128];
+    sprintf(buff, "%s/treasures", hunt_id);
     int file_desc = open(buff, O_RDONLY);
     if(file_desc < 0) {
         printf("ERROR: Cannot open treasure file for: %s\n", hunt_id);
